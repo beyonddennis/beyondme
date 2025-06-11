@@ -59,6 +59,8 @@ if args.build:
 
 if args.shell:
     if args.ip and args.port:
-        get_shell(args.ip,args.port) 
+        print("\033[1m\033[32m[+] Multi-session support enabled. You can manage multiple devices in parallel.\033[0m")
+        print("Type 'sessions' to list, 'interact <id>' to interact, 'broadcast <cmd>' to send to all.")
+        get_shell(args.ip,args.port)
     else:
         print(stdOutput("error")+"\033[1mArguments Missing")
