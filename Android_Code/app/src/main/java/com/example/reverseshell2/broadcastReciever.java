@@ -12,17 +12,23 @@ public class broadcastReciever extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.i(TAG, "Received...");
-
-        if(isMyServiceRunning(context)) {
-            Log.v(TAG, "Yeah, it's running, no need to restart service");
+        String action = intent.getAction();
+        if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
+            // On boot, schedule job or restart service
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                new functions(null).jobScheduler(context);
+            } else {
+                context.startService(new Intent(context, mainService.class));
+            }
+        } else {
+            if(isMyServiceRunning(context)) {
+                Log.v(TAG, "Yeah, it's running, no need to restart service");
+            } else {
+                Log.v(TAG, "Not running, restarting service");
+                Intent intent1 = new Intent(context, mainService.class);
+                context.startService(intent1);
+            }
         }
-
-        else {
-            Log.v(TAG, "Not running, restarting service");
-            Intent intent1 = new Intent(context, mainService.class);
-            context.startService(intent1);
-        }
-
     }
 
     private boolean isMyServiceRunning(Context context) {

